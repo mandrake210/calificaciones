@@ -3119,21 +3119,31 @@ function detenerCamaraAsist(){
 
 function _asistScanFrame(){
   if(!_asist.scanActive)return;
-  const v=document.getElementById('asistVideo');const c=document.getElementById('asistScanCanvas');
-  if(!v||!c||!window.jsQR){_asist.scanAnim=requestAnimationFrame(_asistScanFrame);return;}
+  const v=document.getElementById('asistVideo');
+  if(!v){_asist.scanAnim=requestAnimationFrame(_asistScanFrame);return;}
+  function _hit(raw){
+    const now=Date.now();
+    if(raw!==_asist.lastScan||now-_asist.lastScanTs>3000){
+      _asist.lastScan=raw;_asist.lastScanTs=now;
+      _procesarQRAsistencia(raw);
+      const box=document.getElementById('asistScanBox');
+      if(box){box.style.borderColor='#d4a843';setTimeout(()=>{if(box)box.style.borderColor='#2a7a4b';},500);}
+    }
+  }
+  if(window._useBD&&window.BarcodeDetector&&v.readyState===v.HAVE_ENOUGH_DATA){
+    new BarcodeDetector({formats:['qr_code']}).detect(v)
+      .then(codes=>{if(codes.length)_hit(codes[0].rawValue);})
+      .catch(()=>{});
+    _asist.scanAnim=requestAnimationFrame(_asistScanFrame);
+    return;
+  }
+  const c=document.getElementById('asistScanCanvas');
+  if(!c||!window.jsQR){_asist.scanAnim=requestAnimationFrame(_asistScanFrame);return;}
   const ctx=c.getContext('2d');
   if(v.readyState===v.HAVE_ENOUGH_DATA){
     c.width=v.videoWidth;c.height=v.videoHeight;ctx.drawImage(v,0,0,c.width,c.height);
     const code=window.jsQR(ctx.getImageData(0,0,c.width,c.height).data,c.width,c.height,{inversionAttempts:'dontInvert'});
-    if(code&&code.data){
-      const now=Date.now();
-      if(code.data!==_asist.lastScan||now-_asist.lastScanTs>3000){
-        _asist.lastScan=code.data;_asist.lastScanTs=now;
-        _procesarQRAsistencia(code.data);
-        const box=document.getElementById('asistScanBox');
-        if(box){box.style.borderColor='#d4a843';setTimeout(()=>{if(box)box.style.borderColor='#2a7a4b';},500);}
-      }
-    }
+    if(code&&code.data)_hit(code.data);
   }
   _asist.scanAnim=requestAnimationFrame(_asistScanFrame);
 }
@@ -3157,10 +3167,18 @@ window._asistDecodeFile=function(file){
 };
 
 function _cargarJsQR(cb){
+  if(window.BarcodeDetector){window._useBD=true;cb();return;}
   if(window.jsQR){cb();return;}
   const s=document.createElement('script');
   s.src='https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';
-  s.onload=cb;s.onerror=()=>showToast('Sin conexión para cargar jsQR','error');
+  s.onload=cb;
+  s.onerror=function(){
+    const s2=document.createElement('script');
+    s2.src='https://unpkg.com/jsqr@1.4.0/dist/jsQR.js';
+    s2.onload=cb;
+    s2.onerror=function(){showToast('Sin internet para cargar el escaner. Recarga la pagina.','error');};
+    document.head.appendChild(s2);
+  };
   document.head.appendChild(s);
 }
 
