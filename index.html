@@ -2107,6 +2107,7 @@ const P2P = {
   status:     'idle', // 'idle' | 'loading' | 'ready' | 'connecting' | 'connected' | 'error'
   lastSync:   null,   // timestamp de última sincronización exitosa
   autoRetry:  null,   // setTimeout handle para reconexión automática
+  autoSync:   true,   // enviar automáticamente al guardar calificación
 };
 
 const P2P_STORAGE_KEY = 'regCalif_p2p_v1'; // clave en localStorage
@@ -2115,9 +2116,10 @@ const P2P_STORAGE_KEY = 'regCalif_p2p_v1'; // clave en localStorage
 function p2pLoadState() {
   try {
     const s = JSON.parse(localStorage.getItem(P2P_STORAGE_KEY) || '{}');
-    P2P.myId     = s.myId     || null;
-    P2P.remoteId = s.remoteId || null;
-    P2P.lastSync = s.lastSync || null;
+    P2P.myId      = s.myId      || null;
+    P2P.remoteId  = s.remoteId  || null;
+    P2P.lastSync  = s.lastSync  || null;
+    P2P.autoSync  = s.autoSync !== false; // true por defecto
   } catch(e) {}
 }
 
@@ -2126,6 +2128,7 @@ function p2pSaveState() {
     myId:     P2P.myId,
     remoteId: P2P.remoteId,
     lastSync: P2P.lastSync,
+    autoSync: P2P.autoSync,
   }));
 }
 
@@ -2306,6 +2309,59 @@ function p2pScheduleRetry(delayMs = 8000) {
   }, delayMs);
 }
 
+// ── Envío automático: una calificación puntual ────────────────────────────
+// Llamado desde saveGradeFromPopup cuando autoSync está activo.
+// Envía SOLO la calificación modificada (payload mínimo).
+function p2pEnviarCalificacion(groupId, key, value) {
+  if (!P2P.autoSync || !P2P.conn || !P2P.conn.open) return;
+
+  const g = data.groups.find(x => x.id === groupId);
+  if (!g) return;
+
+  const miniSync = {
+    version: 'sync_v1',
+    fecha: new Date().toISOString().slice(0, 10),
+    grupos: {
+      [groupId]: {
+        id: groupId, name: g.name, subject: g.subject || '',
+        students: g.students,
+        grades:   { [key]: value },
+        hwStatus: {}, conduct: {}, asistencia: {},
+      }
+    },
+    totalCambios: 1,
+  };
+
+  const json = JSON.stringify({
+    type: 'sync_grades', version: 'sync_v1',
+    timestamp: Date.now(), sender: P2P.myId, sync: miniSync,
+  });
+  const compressed = 'P2P:' + LZString.compressToBase64(json);
+
+  try {
+    P2P.conn.send(compressed);
+    P2P.lastSync = new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    p2pSaveState();
+    // Indicador visual sutil en el dot (no toast para no interrumpir)
+    const dot = document.getElementById('p2pStatusDot');
+    if (dot) {
+      dot.style.background = '#ffffff';
+      setTimeout(() => { dot.style.background = '#22cc55'; }, 200);
+    }
+    // Actualizar contador en Ajustes si está visible
+    const lastEl = document.getElementById('p2pLastSyncLabel');
+    if (lastEl) lastEl.textContent = '✅ Último envío: ' + P2P.lastSync;
+  } catch(e) { /* falla silenciosa — no interrumpir al maestro */ }
+}
+
+// ── Toggle auto-sync desde Ajustes ───────────────────────────────────────
+function p2pToggleAutoSync() {
+  P2P.autoSync = !P2P.autoSync;
+  p2pSaveState();
+  p2pRefreshUI();
+  showToast(P2P.autoSync ? '🟢 Auto-sync activado' : '⏸ Auto-sync pausado', 'success');
+}
+
 // ── Enviar calificaciones al par ──────────────────────────────────────────
 function p2pSincronizarAhora() {
   if (!P2P.conn || !P2P.conn.open) {
@@ -2442,9 +2498,34 @@ function p2pRefreshUI() {
           style="padding:8px 16px;background:#155724;color:white;border:none;border-radius:7px;
                  font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap;
                  box-shadow:0 2px 6px rgba(21,87,36,0.3)">
-          🔄 Sincronizar ahora
+          🔄 Sincronizar todo ahora
         </button>` : ''}
     </div>
+
+    <!-- Auto-sync toggle (solo visible cuando conectado) -->
+    ${connected ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;
+                background:${P2P.autoSync ? '#f0fff4' : '#fafafa'};
+                border:1.5px solid ${P2P.autoSync ? '#a0ddb0' : '#ddd'};
+                border-radius:10px;padding:11px 16px;margin-bottom:14px;
+                transition:background 0.3s,border-color 0.3s">
+      <div>
+        <div style="font-weight:700;font-size:0.85rem;color:${P2P.autoSync ? '#155724' : '#555'}">
+          ${P2P.autoSync ? '⚡ Auto-sync activo' : '⏸ Auto-sync pausado'}
+        </div>
+        <div id="p2pLastSyncLabel" style="font-size:0.72rem;color:#777;margin-top:2px">
+          ${P2P.lastSync ? '✅ Último envío: ' + P2P.lastSync : 'Cada calificación que guardes se enviará al instante'}
+        </div>
+      </div>
+      <button onclick="p2pToggleAutoSync()"
+        style="padding:7px 14px;background:${P2P.autoSync ? '#155724' : '#888'};color:white;
+               border:none;border-radius:20px;font-family:inherit;font-size:0.78rem;
+               font-weight:700;cursor:pointer;white-space:nowrap;min-width:64px;
+               transition:background 0.2s">
+        ${P2P.autoSync ? 'ON' : 'OFF'}
+      </button>
+    </div>
+    ` : ''}
 
     <!-- Mi ID -->
     <div style="margin-bottom:12px">
@@ -3118,8 +3199,10 @@ function saveGradeFromPopup(sid, aid, dir) {
     if (isNaN(val)) { showToast('Ingresa un número entre 0 y 10','error'); return; }
     val = parseFloat(val.toFixed(1));
     g.grades[key] = val;
+    p2pEnviarCalificacion(g.id, key, val);   // ← auto-sync puntual
   } else {
     delete g.grades[key];
+    p2pEnviarCalificacion(g.id, key, '');    // ← notificar borrado
   }
   autoSave(); closeGradePopup(); refreshGradeCell(sid, aid);
   if (dir) navigateGradeCell(sid, aid, dir);
