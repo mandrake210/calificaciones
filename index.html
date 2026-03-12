@@ -2393,6 +2393,61 @@ function p2pSincronizarAhora() {
   }
 }
 
+// ── Enviar TODAS las calificaciones (sin filtro de fecha) ─────────────────
+// Úsalo cuando la laptop no tiene datos que sí existen en la tablet.
+function p2pEnviarTodo() {
+  if (!P2P.conn || !P2P.conn.open) {
+    showToast('⚠️ Sin conexión activa — verifica que el otro dispositivo esté abierto', 'error');
+    return;
+  }
+
+  // Construir payload completo con TODOS los grupos y TODAS las calificaciones
+  const syncCompleto = {
+    version: 'sync_v1',
+    fecha:   new Date().toISOString().slice(0, 10),
+    grupos:  {},
+    totalCambios: 0,
+  };
+
+  data.groups.forEach(g => {
+    const totalGrupo = Object.keys(g.grades || {}).length;
+    syncCompleto.grupos[g.id] = {
+      id:        g.id,
+      name:      g.name,
+      subject:   g.subject || '',
+      students:  g.students,
+      grades:    { ...g.grades },
+      hwStatus:  { ...g.hwStatus },
+      conduct:   { ...g.conduct },
+      asistencia: {},
+    };
+    syncCompleto.totalCambios += totalGrupo;
+  });
+
+  if (syncCompleto.totalCambios === 0) {
+    showToast('No hay calificaciones registradas para enviar', 'error');
+    return;
+  }
+
+  const json = JSON.stringify({
+    type: 'sync_grades', version: 'sync_v1',
+    timestamp: Date.now(), sender: P2P.myId,
+    sync: syncCompleto,
+  });
+  const compressed = 'P2P:' + LZString.compressToBase64(json);
+
+  try {
+    P2P.conn.send(compressed);
+    P2P.lastSync = new Date().toLocaleTimeString('es-MX', { hour:'2-digit', minute:'2-digit' });
+    p2pSaveState();
+    const nGrupos = Object.keys(syncCompleto.grupos).length;
+    showToast(`📤 ${syncCompleto.totalCambios} calificaciones · ${nGrupos} grupos enviados`, 'success');
+    p2pRefreshUI();
+  } catch(e) {
+    showToast('Error al enviar: ' + e.message, 'error');
+  }
+}
+
 // ── Recibir y aplicar datos del par ──────────────────────────────────────
 function _p2pRecibirDatos(raw) {
   // Descomprimir string LZ recibido por canal 'raw'
@@ -2498,11 +2553,22 @@ function p2pRefreshUI() {
           style="padding:8px 16px;background:#155724;color:white;border:none;border-radius:7px;
                  font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap;
                  box-shadow:0 2px 6px rgba(21,87,36,0.3)">
-          🔄 Sincronizar todo ahora
+          🔄 Hoy
         </button>` : ''}
     </div>
 
-    <!-- Auto-sync toggle (solo visible cuando conectado) -->
+    <!-- Botón principal: Enviar TODO (visible y prominente cuando conectado) -->
+    ${connected ? `
+    <button onclick="p2pEnviarTodo()"
+      style="width:100%;padding:14px;background:linear-gradient(135deg,#1a3a6a,#2a5a9a);
+             color:white;border:none;border-radius:10px;font-family:inherit;font-size:0.95rem;
+             font-weight:700;cursor:pointer;margin-bottom:14px;
+             box-shadow:0 3px 10px rgba(26,58,106,0.35);
+             display:flex;align-items:center;justify-content:center;gap:10px">
+      <span style="font-size:1.2rem">📤</span>
+      <span>Enviar todas las calificaciones a la laptop</span>
+    </button>
+    ` : ''}
     ${connected ? `
     <div style="display:flex;align-items:center;justify-content:space-between;
                 background:${P2P.autoSync ? '#f0fff4' : '#fafafa'};
