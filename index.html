@@ -2284,25 +2284,30 @@ function _p2pConfigConn(conn) {
 
   conn.on('data', raw => {
     // raw puede ser string (serialization:raw) u objeto (serialization:json)
-    // Normalizar ambos casos para máxima compatibilidad
+    let payload = null;
+
     if (typeof raw === 'object' && raw !== null) {
-      // Llegó como objeto JSON nativo (conexión entrante con serialization:json)
-      _p2pAplicarPayload(raw);
+      payload = raw;
     } else if (typeof raw === 'string') {
       if (raw.startsWith('P2P:')) {
-        // String comprimido con LZString
         try {
-          const json  = LZString.decompressFromBase64(raw.slice(4));
-          const payload = JSON.parse(json);
-          _p2pAplicarPayload(payload);
-        } catch(e) {
-          showToast('Error al descomprimir: ' + e.message, 'error');
-        }
+          payload = JSON.parse(LZString.decompressFromBase64(raw.slice(4)));
+        } catch(e) { showToast('Error al descomprimir: ' + e.message, 'error'); }
       } else {
-        // Intentar parsear como JSON plano
-        try { _p2pAplicarPayload(JSON.parse(raw)); } catch(e) {}
+        try { payload = JSON.parse(raw); } catch(e) {}
       }
     }
+
+    if (!payload) return;
+
+    // La laptop pide datos → la tablet responde con todo automáticamente
+    if (payload.type === 'request_all') {
+      _p2pResponderPeticion();
+      return;
+    }
+
+    // Datos recibidos normales
+    _p2pAplicarPayload(payload);
   });
 
   conn.on('close', () => {
@@ -2459,6 +2464,36 @@ function p2pEnviarTodo() {
   }
 }
 
+// ── La tablet responde a una petición de la laptop ────────────────────────
+// Se ejecuta automáticamente cuando llega type:'request_all'
+function _p2pResponderPeticion() {
+  const syncCompleto = { version:'sync_v1', fecha: new Date().toISOString().slice(0,10),
+                         grupos:{}, totalCambios:0 };
+  data.groups.forEach(g => {
+    const n = Object.keys(g.grades||{}).length;
+    syncCompleto.grupos[g.id] = {
+      id:g.id, name:g.name, subject:g.subject||'', students:g.students,
+      grades:{...g.grades}, hwStatus:{...g.hwStatus},
+      conduct:{...g.conduct}, asistencia:{},
+    };
+    syncCompleto.totalCambios += n;
+  });
+  _p2pSend({ type:'sync_grades', version:'sync_v1',
+             timestamp:Date.now(), sender:P2P.myId, sync:syncCompleto });
+  showToast(`📤 Tablet envió ${syncCompleto.totalCambios} calificaciones`, 'success');
+}
+
+// ── La laptop pide los datos a la tablet ──────────────────────────────────
+// Un solo botón: la laptop envía la petición y espera la respuesta.
+function p2pPedirDatos() {
+  if (!P2P.conn || !P2P.conn.open) {
+    showToast('⚠️ Sin conexión — abre la app en la tablet primero', 'error');
+    return;
+  }
+  _p2pSend({ type:'request_all', sender:P2P.myId, timestamp:Date.now() });
+  showToast('📡 Solicitando datos a la tablet…', 'success');
+}
+
 // ── Aplicar payload recibido (independiente del formato de transporte) ────
 function _p2pAplicarPayload(payload) {
   if (!payload || payload.type !== 'sync_grades') return;
@@ -2557,7 +2592,7 @@ function p2pRefreshUI() {
   panel.innerHTML = `
     <!-- Estado de conexión -->
     <div style="background:${si.bg};border:1.5px solid ${si.color}33;border-radius:10px;
-                padding:12px 16px;display:flex;align-items:center;gap:12px;margin-bottom:14px">
+                padding:12px 16px;display:flex;align-items:center;gap:12px;margin-bottom:${connected?'14px':'0'}">
       <span style="font-size:1.4rem">${si.icon}</span>
       <div style="flex:1;min-width:0">
         <div style="font-weight:700;color:${si.color};font-size:0.88rem">${si.label}</div>
@@ -2565,44 +2600,63 @@ function p2pRefreshUI() {
           ${P2P._statusMsg || ''}
         </div>
       </div>
-      ${connected ? `
-        <button onclick="p2pSincronizarAhora()"
-          style="padding:8px 16px;background:#155724;color:white;border:none;border-radius:7px;
-                 font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap;
-                 box-shadow:0 2px 6px rgba(21,87,36,0.3)">
-          🔄 Hoy
-        </button>` : ''}
     </div>
 
-    <!-- Botón principal: Enviar TODO (visible y prominente cuando conectado) -->
     ${connected ? `
-    <button onclick="p2pEnviarTodo()"
-      style="width:100%;padding:14px;background:linear-gradient(135deg,#1a3a6a,#2a5a9a);
-             color:white;border:none;border-radius:10px;font-family:inherit;font-size:0.95rem;
-             font-weight:700;cursor:pointer;margin-bottom:14px;
-             box-shadow:0 3px 10px rgba(26,58,106,0.35);
+    <!-- ═══ BOTONES PRINCIPALES (solo cuando conectado) ═══ -->
+
+    <!-- 1. LAPTOP: Traer datos de la tablet (PULL) -->
+    <button onclick="p2pPedirDatos()"
+      style="width:100%;padding:16px;margin-top:14px;
+             background:linear-gradient(135deg,#1a3a6a,#2a5a9a);
+             color:white;border:none;border-radius:12px;font-family:inherit;
+             font-size:1rem;font-weight:700;cursor:pointer;
+             box-shadow:0 4px 14px rgba(26,58,106,0.4);
              display:flex;align-items:center;justify-content:center;gap:10px">
-      <span style="font-size:1.2rem">📤</span>
-      <span>Enviar todas las calificaciones a la laptop</span>
+      <span style="font-size:1.4rem">🔄</span>
+      <div style="text-align:left">
+        <div>Actualizar laptop desde tablet</div>
+        <div style="font-size:0.72rem;font-weight:400;opacity:0.8;margin-top:1px">
+          La tablet envía todas sus calificaciones aquí
+        </div>
+      </div>
     </button>
-    ` : ''}
-    ${connected ? `
+
+    <!-- 2. TABLET: Enviar datos a la laptop (PUSH) -->
+    <button onclick="p2pEnviarTodo()"
+      style="width:100%;padding:12px;margin-top:10px;
+             background:#155724;
+             color:white;border:none;border-radius:10px;font-family:inherit;
+             font-size:0.88rem;font-weight:700;cursor:pointer;
+             box-shadow:0 2px 8px rgba(21,87,36,0.3);
+             display:flex;align-items:center;justify-content:center;gap:8px">
+      <span style="font-size:1.1rem">📤</span>
+      <div style="text-align:left">
+        <div>Enviar todo desde esta tablet</div>
+        <div style="font-size:0.7rem;font-weight:400;opacity:0.8;margin-top:1px">
+          Presiona esto si estás en la tablet
+        </div>
+      </div>
+    </button>
+
+    <!-- Última sincronización + auto-sync -->
     <div style="display:flex;align-items:center;justify-content:space-between;
+                margin-top:12px;padding:10px 14px;
                 background:${P2P.autoSync ? '#f0fff4' : '#fafafa'};
                 border:1.5px solid ${P2P.autoSync ? '#a0ddb0' : '#ddd'};
-                border-radius:10px;padding:11px 16px;margin-bottom:14px;
-                transition:background 0.3s,border-color 0.3s">
+                border-radius:10px">
       <div>
-        <div style="font-weight:700;font-size:0.85rem;color:${P2P.autoSync ? '#155724' : '#555'}">
+        <div style="font-weight:700;font-size:0.82rem;color:${P2P.autoSync ? '#155724' : '#666'}">
           ${P2P.autoSync ? '⚡ Auto-sync activo' : '⏸ Auto-sync pausado'}
         </div>
-        <div id="p2pLastSyncLabel" style="font-size:0.72rem;color:#777;margin-top:2px">
-          ${P2P.lastSync ? '✅ Último envío: ' + P2P.lastSync : 'Cada calificación que guardes se enviará al instante'}
+        <div id="p2pLastSyncLabel" style="font-size:0.7rem;color:#777;margin-top:1px">
+          ${P2P.lastSync ? '✅ Última sync: ' + P2P.lastSync : 'Sin sincronizaciones recientes'}
         </div>
       </div>
       <button onclick="p2pToggleAutoSync()"
-        style="padding:7px 14px;background:${P2P.autoSync ? '#155724' : '#888'};color:white;
+        style="padding:6px 14px;background:${P2P.autoSync ? '#155724' : '#888'};color:white;
                border:none;border-radius:20px;font-family:inherit;font-size:0.78rem;
+               font-weight:700;cursor:pointer;white-space:nowrap">
                font-weight:700;cursor:pointer;white-space:nowrap;min-width:64px;
                transition:background 0.2s">
         ${P2P.autoSync ? 'ON' : 'OFF'}
