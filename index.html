@@ -2147,73 +2147,95 @@ function _cargarPeerJS(cb) {
 }
 
 // ── Inicializar PeerJS ────────────────────────────────────────────────────
+// ── Generar ID corto propio (8 chars alfanuméricos) ───────────────────────
+// Prefijo 'rc' para evitar colisión con IDs genéricos del servidor PeerJS.
+// El ID se persiste en localStorage y se reclama siempre al conectar.
+function _p2pGenerarId() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789'; // sin letras/números ambiguos
+  let id = 'rc-';
+  for (let i = 0; i < 5; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id; // ej: "rc-k7m3x"
+}
+
 function p2pInit() {
   p2pLoadState();
   p2pSetStatus('loading', 'Cargando módulo de conexión…');
 
+  // Generar ID propio corto si aún no existe
+  if (!P2P.myId) {
+    P2P.myId = _p2pGenerarId();
+    p2pSaveState();
+  }
+
   _cargarPeerJS(() => {
-    // Usar ID persistido si existe, de lo contrario PeerJS genera uno
-    const opts = P2P.myId ? { id: P2P.myId } : {};
+    _p2pCrearPeer(P2P.myId);
+  });
+}
 
-    try {
-      P2P.peer = new Peer(opts, {
-        // Servidor de señalización público de PeerJS (gratuito)
-        host: '0.peerjs.com', port: 443, secure: true, path: '/',
-        debug: 0,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' },
-          ]
-        }
-      });
-    } catch(e) {
-      p2pSetStatus('error', 'No se pudo crear el par: ' + e.message);
-      return;
-    }
+// Crear instancia PeerJS con un ID dado (se separa para poder reintentar con ID nuevo)
+function _p2pCrearPeer(peerId) {
+  // Destruir instancia previa si existe
+  if (P2P.peer) { try { P2P.peer.destroy(); } catch(e){} P2P.peer = null; }
 
-    P2P.peer.on('open', id => {
-      P2P.myId = id;
-      p2pSaveState();
-      p2pSetStatus('ready', 'Listo · ID: ' + id);
-      p2pRefreshUI();
-      // Si ya conocemos al remoto, conectar automáticamente
-      if (P2P.remoteId) p2pConectar(P2P.remoteId);
-    });
-
-    P2P.peer.on('connection', conn => {
-      // Alguien se conectó a nosotros
-      _p2pConfigConn(conn);
-      p2pSetStatus('connected', 'Conectado con ' + conn.peer);
-      p2pRefreshUI();
-    });
-
-    P2P.peer.on('error', err => {
-      // "peer-unavailable" ocurre cuando el remoto aún no abrió la app
-      if (err.type === 'peer-unavailable') {
-        p2pSetStatus('ready', 'Par remoto no disponible aún · Reintentando…');
-        p2pScheduleRetry();
-      } else if (err.type === 'unavailable-id') {
-        // ID ya en uso → pedir uno nuevo
-        P2P.myId = null;
-        p2pSaveState();
-        p2pSetStatus('error', 'ID ocupado · Reinicia para obtener uno nuevo');
-      } else {
-        p2pSetStatus('error', 'Error de red: ' + (err.message || err.type));
-        p2pScheduleRetry();
+  try {
+    P2P.peer = new Peer(peerId, {
+      host: '0.peerjs.com', port: 443, secure: true, path: '/',
+      debug: 0,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' },
+        ]
       }
-      p2pRefreshUI();
     });
+  } catch(e) {
+    p2pSetStatus('error', 'No se pudo crear el par: ' + e.message);
+    p2pRefreshUI();
+    return;
+  }
 
-    P2P.peer.on('disconnected', () => {
-      p2pSetStatus('ready', 'Desconectado del servidor · Reconectando…');
-      P2P.peer.reconnect();
-    });
+  P2P.peer.on('open', id => {
+    // El servidor confirmó nuestro ID (siempre debe coincidir con el que pedimos)
+    P2P.myId = id;
+    p2pSaveState();
+    p2pSetStatus('ready', 'Listo · ID: ' + id);
+    p2pRefreshUI();
+    if (P2P.remoteId) p2pConectar(P2P.remoteId);
+  });
 
-    P2P.peer.on('close', () => {
-      p2pSetStatus('idle', 'Conexión cerrada');
+  P2P.peer.on('connection', conn => {
+    _p2pConfigConn(conn);
+    p2pSetStatus('connected', 'Conectado con ' + conn.peer);
+    p2pRefreshUI();
+  });
+
+  P2P.peer.on('error', err => {
+    if (err.type === 'peer-unavailable') {
+      p2pSetStatus('ready', 'Par remoto no disponible aún · Reintentando…');
+      p2pScheduleRetry();
+    } else if (err.type === 'unavailable-id') {
+      // El ID corto está ocupado → generar uno nuevo y reconectar
+      P2P.myId = _p2pGenerarId();
+      p2pSaveState();
+      p2pSetStatus('loading', 'ID ocupado · Obteniendo uno nuevo…');
       p2pRefreshUI();
-    });
+      setTimeout(() => _p2pCrearPeer(P2P.myId), 800);
+      return;
+    } else {
+      p2pSetStatus('error', 'Error de red: ' + (err.message || err.type));
+      p2pScheduleRetry();
+    }
+    p2pRefreshUI();
+  });
+
+  P2P.peer.on('disconnected', () => {
+    p2pSetStatus('ready', 'Desconectado del servidor · Reconectando…');
+    P2P.peer.reconnect();
+  });
+
+  P2P.peer.on('close', () => {
+    p2pSetStatus('idle', 'Conexión cerrada');
+    p2pRefreshUI();
   });
 }
 
