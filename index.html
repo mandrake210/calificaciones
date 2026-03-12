@@ -1,14 +1,19 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <link rel="manifest" href="/calificaciones/manifest.json">
-<meta name="theme-color" content="#1a1a2e">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Calificaciones">
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Registro de Calificaciones</title>
+<meta name="application-name" content="Calificaciones">
+<meta name="apple-mobile-web-app-title" content="Calificaciones">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a1a2e">
+<meta name="description" content="App de registro de calificaciones, asistencia y conducta para maestros">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
@@ -1588,13 +1593,51 @@ function renderSettingsTab(container) {
 
       <!-- Importar en laptop -->
       <div style="border:1.5px solid #e0d0c0;border-radius:10px;padding:14px;background:#fffaf5">
-        <div style="font-weight:700;font-size:0.88rem;color:#4a2a00;margin-bottom:4px">📥 Importar en la laptop</div>
-        <div style="font-size:0.72rem;color:#555;margin-bottom:10px;line-height:1.4">Abre la app en la laptop, ve a Ajustes → Sincronización Diaria y sube el archivo JSON recibido. Los cambios se fusionan automáticamente sin borrar nada.</div>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <div style="flex:1;padding:8px 14px;background:#f5f0e8;border:1.5px solid var(--border);border-radius:6px;font-size:0.8rem;color:#888" id="sincImportLabel">Seleccionar archivo sync_*.json...</div>
-          <input type="file" accept=".json" style="display:none" onchange="importarSincDia(this)">
-          <button onclick="this.previousElementSibling.previousElementSibling.nextElementSibling.click()" style="padding:8px 16px;background:#b85c00;color:white;border:none;border-radius:6px;font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap">📂 Abrir</button>
-        </label>
+        <div style="font-weight:700;font-size:0.88rem;color:#4a2a00;margin-bottom:6px">📥 Recibir en la laptop</div>
+
+        <!-- Tabs: Cámara QR | Archivo JSON -->
+        <div style="display:flex;gap:6px;margin-bottom:12px">
+          <button id="btnSincCam" onclick="setSincImportMode('cam')" style="flex:1;padding:7px;border-radius:6px;border:2px solid #2a4a8a;background:#2a4a8a;color:white;font-family:inherit;font-size:0.78rem;font-weight:700;cursor:pointer">📷 Escanear QR con cámara</button>
+          <button id="btnSincFile" onclick="setSincImportMode('file')" style="flex:1;padding:7px;border-radius:6px;border:2px solid var(--border);background:var(--cream);color:var(--ink);font-family:inherit;font-size:0.78rem;font-weight:600;cursor:pointer">📂 Subir archivo JSON</button>
+        </div>
+
+        <!-- Modo cámara -->
+        <div id="sincImportCam">
+          <div style="font-size:0.72rem;color:#555;margin-bottom:8px;line-height:1.4">
+            Toca <strong>Iniciar cámara</strong>, apunta al QR que muestra tu tableta. Cuando detecte todos los QRs los datos se fusionan automáticamente. ✅
+          </div>
+          <button onclick="iniciarSincScanner()" id="btnIniciarSincCam" style="padding:8px 18px;background:#2a4a8a;color:white;border:none;border-radius:6px;font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;margin-bottom:8px">▶ Iniciar cámara</button>
+          <button onclick="detenerSincScanner()" id="btnDetenerSincCam" style="display:none;padding:8px 16px;background:#888;color:white;border:none;border-radius:6px;font-family:inherit;font-size:0.82rem;font-weight:600;cursor:pointer;margin-bottom:8px">⏹ Detener</button>
+
+          <div id="sincScannerWrap" style="display:none;position:relative;border-radius:10px;overflow:hidden;border:2px solid #2a4a8a;max-width:400px;margin-bottom:8px">
+            <video id="sincScanVideo" autoplay playsinline muted style="width:100%;display:block"></video>
+            <canvas id="sincScanCanvas" style="display:none"></canvas>
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+              <div id="sincScanBox" style="width:220px;height:220px;border:3px solid #2a4a8a;border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,0.45);transition:border-color 0.2s"></div>
+            </div>
+          </div>
+
+          <!-- Progreso de chunks -->
+          <div id="sincScanProgress" style="display:none;background:#f0f4ff;border:1.5px solid #c0d0f0;border-radius:8px;padding:10px 14px;font-size:0.82rem;margin-bottom:6px">
+            <div style="font-weight:700;color:#1a2a5a;margin-bottom:4px" id="sincScanProgressTitle">Escaneando QRs...</div>
+            <div id="sincScanProgressBar" style="background:#e0e8ff;border-radius:4px;height:8px;margin-bottom:6px">
+              <div id="sincScanProgressFill" style="background:#2a4a8a;height:8px;border-radius:4px;width:0%;transition:width 0.3s"></div>
+            </div>
+            <div id="sincScanProgressDetail" style="font-size:0.75rem;color:#555"></div>
+          </div>
+
+          <div id="sincScanFeedback" style="min-height:20px;font-size:0.82rem"></div>
+        </div>
+
+        <!-- Modo archivo -->
+        <div id="sincImportFile" style="display:none">
+          <div style="font-size:0.72rem;color:#555;margin-bottom:8px;line-height:1.4">Exporta el archivo desde la tableta y ábrelo aquí. Los cambios se fusionan sin borrar nada.</div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <div style="flex:1;padding:8px 14px;background:#f5f0e8;border:1.5px solid var(--border);border-radius:6px;font-size:0.8rem;color:#888" id="sincImportLabel">Seleccionar archivo sync_*.json...</div>
+            <input type="file" accept=".json" style="display:none" onchange="importarSincDia(this)">
+            <button onclick="this.previousElementSibling.previousElementSibling.nextElementSibling.click()" style="padding:8px 16px;background:#b85c00;color:white;border:none;border-radius:6px;font-family:inherit;font-size:0.82rem;font-weight:700;cursor:pointer;white-space:nowrap">📂 Abrir</button>
+          </label>
+        </div>
       </div>
 
     </div>
@@ -3904,6 +3947,479 @@ function importarSincDia(input) {
 
 // Inicializar info cuando se carga la sección
 setTimeout(()=>_renderSyncInfo(), 500);
+
+
+// ════════════════════════════════════════════════════════════════════
+// SCANNER QR PARA SINCRONIZACIÓN (laptop recibe desde tableta)
+// ════════════════════════════════════════════════════════════════════
+
+let _sincScanner = {
+  stream: null, anim: null, active: false,
+  chunks: {}, total: 0, received: new Set()
+};
+
+function setSincImportMode(mode) {
+  const cam  = document.getElementById('sincImportCam');
+  const file = document.getElementById('sincImportFile');
+  const btnC = document.getElementById('btnSincCam');
+  const btnF = document.getElementById('btnSincFile');
+  if(mode==='cam'){
+    if(cam)  cam.style.display='block';
+    if(file) file.style.display='none';
+    if(btnC){ btnC.style.background='#2a4a8a';btnC.style.color='white';btnC.style.borderColor='#2a4a8a'; }
+    if(btnF){ btnF.style.background='var(--cream)';btnF.style.color='var(--ink)';btnF.style.borderColor='var(--border)'; }
+  } else {
+    detenerSincScanner();
+    if(cam)  cam.style.display='none';
+    if(file) file.style.display='block';
+    if(btnC){ btnC.style.background='var(--cream)';btnC.style.color='var(--ink)';btnC.style.borderColor='var(--border)'; }
+    if(btnF){ btnF.style.background='#b85c00';btnF.style.color='white';btnF.style.borderColor='#b85c00'; }
+  }
+}
+
+function iniciarSincScanner() {
+  if(!navigator.mediaDevices){ showToast('Cámara no disponible en este dispositivo','error'); return; }
+
+  const wrap  = document.getElementById('sincScannerWrap');
+  const btnI  = document.getElementById('btnIniciarSincCam');
+  const btnD  = document.getElementById('btnDetenerSincCam');
+  const prog  = document.getElementById('sincScanProgress');
+  const fb    = document.getElementById('sincScanFeedback');
+
+  if(wrap)  wrap.style.display='block';
+  if(btnI)  btnI.style.display='none';
+  if(btnD)  btnD.style.display='inline-block';
+  if(prog)  prog.style.display='block';
+  if(fb)    fb.innerHTML='<span style="color:#2a4a8a">🔍 Apunta al QR de la tableta...</span>';
+
+  // Reset chunks
+  _sincScanner.chunks  = {};
+  _sincScanner.total   = 0;
+  _sincScanner.received = new Set();
+
+  navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}})
+    .then(stream => {
+      _sincScanner.stream = stream;
+      _sincScanner.active = true;
+      const video = document.getElementById('sincScanVideo');
+      if(video){ video.srcObject=stream; video.play(); }
+      _cargarJsQR(() => _sincScanFrame());
+    })
+    .catch(err => {
+      if(fb) fb.innerHTML=`<span style="color:red">❌ ${err.message}</span>`;
+      showToast('Error cámara: '+err.message,'error');
+    });
+}
+
+function detenerSincScanner() {
+  _sincScanner.active = false;
+  if(_sincScanner.anim){ cancelAnimationFrame(_sincScanner.anim); _sincScanner.anim=null; }
+  if(_sincScanner.stream){ _sincScanner.stream.getTracks().forEach(t=>{t.stop();t.enabled=false;}); _sincScanner.stream=null; }
+  const video = document.getElementById('sincScanVideo');
+  if(video){ video.srcObject=null; video.load(); }
+  const wrap = document.getElementById('sincScannerWrap');
+  const btnI = document.getElementById('btnIniciarSincCam');
+  const btnD = document.getElementById('btnDetenerSincCam');
+  if(wrap)  wrap.style.display='none';
+  if(btnI)  btnI.style.display='inline-block';
+  if(btnD)  btnD.style.display='none';
+}
+
+function _sincScanFrame() {
+  if(!_sincScanner.active) return;
+  const video  = document.getElementById('sincScanVideo');
+  const canvas = document.getElementById('sincScanCanvas');
+  if(!video||!canvas){ _sincScanner.anim=requestAnimationFrame(_sincScanFrame); return; }
+
+  function processCode(raw) {
+    try {
+      const obj = JSON.parse(raw);
+      // Formato: {i: índice, t: total, d: datos}
+      if(typeof obj.i==='number' && typeof obj.t==='number' && obj.d) {
+        if(!_sincScanner.received.has(obj.i)) {
+          _sincScanner.chunks[obj.i] = obj.d;
+          _sincScanner.total = obj.t;
+          _sincScanner.received.add(obj.i);
+
+          // Flash verde en recuadro
+          const box = document.getElementById('sincScanBox');
+          if(box){ box.style.borderColor='#2a7a4b'; setTimeout(()=>{if(box)box.style.borderColor='#2a4a8a';},400); }
+
+          // Actualizar progreso
+          const recibidos = _sincScanner.received.size;
+          const total     = _sincScanner.total;
+          const pct       = Math.round(recibidos/total*100);
+          const fill  = document.getElementById('sincScanProgressFill');
+          const title = document.getElementById('sincScanProgressTitle');
+          const detail= document.getElementById('sincScanProgressDetail');
+          const fb    = document.getElementById('sincScanFeedback');
+          if(fill)  fill.style.width = pct+'%';
+          if(title) title.textContent = `QR ${recibidos} de ${total} escaneados`;
+          if(detail){
+            const faltantes = [];
+            for(let i=0;i<total;i++){ if(!_sincScanner.received.has(i)) faltantes.push(i+1); }
+            detail.textContent = faltantes.length ? `Faltan QRs: ${faltantes.join(', ')}` : '¡Todos escaneados!';
+          }
+          if(fb) fb.innerHTML=`<span style="color:#2a7a4b;font-weight:700">✅ QR ${obj.i+1}/${total} recibido</span>`;
+
+          // Si ya están todos → fusionar automáticamente
+          if(recibidos === total) {
+            detenerSincScanner();
+            _fusionarChunksSinc();
+          }
+        }
+      }
+    } catch(e) { /* QR no es sync, ignorar */ }
+  }
+
+  // Usar BarcodeDetector si disponible
+  if(window.BarcodeDetector && video.readyState===video.HAVE_ENOUGH_DATA) {
+    new BarcodeDetector({formats:['qr_code']}).detect(video)
+      .then(codes=>{ if(codes.length) processCode(codes[0].rawValue); })
+      .catch(()=>{});
+    _sincScanner.anim = requestAnimationFrame(_sincScanFrame);
+    return;
+  }
+
+  // Fallback jsQR
+  if(!window.jsQR){ _sincScanner.anim=requestAnimationFrame(_sincScanFrame); return; }
+  const ctx = canvas.getContext('2d');
+  if(video.readyState===video.HAVE_ENOUGH_DATA) {
+    canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    const code=window.jsQR(ctx.getImageData(0,0,canvas.width,canvas.height).data,canvas.width,canvas.height,{inversionAttempts:'dontInvert'});
+    if(code&&code.data) processCode(code.data);
+  }
+  _sincScanner.anim = requestAnimationFrame(_sincScanFrame);
+}
+
+function _fusionarChunksSinc() {
+  try {
+    // Reconstruir JSON completo desde chunks en orden
+    let jsonStr = '';
+    for(let i=0; i<_sincScanner.total; i++) {
+      jsonStr += _sincScanner.chunks[i];
+    }
+    const sync = JSON.parse(jsonStr);
+
+    if(sync.version !== 'sync_v1') {
+      showToast('Formato de sincronización no reconocido','error'); return;
+    }
+
+    // Reusar la función de importación existente con el objeto directo
+    _aplicarSincDia(sync);
+
+  } catch(err) {
+    showToast('Error al reconstruir datos: '+err.message,'error');
+    const fb = document.getElementById('sincScanFeedback');
+    if(fb) fb.innerHTML=`<span style="color:red">❌ Error: ${err.message}</span>`;
+  }
+}
+
+function _aplicarSincDia(sync) {
+  let calMerged=0, asistMerged=0, gruposMerged=0;
+
+  Object.values(sync.grupos).forEach(sg => {
+    let localG = data.groups.find(g => g.id === sg.id);
+    if(!localG){ data.groups.push({...sg}); gruposMerged++; return; }
+
+    Object.keys(sg.grades||{}).forEach(k=>{
+      if(sg.grades[k]!==undefined&&sg.grades[k]!==''){localG.grades[k]=sg.grades[k];calMerged++;}
+    });
+    Object.keys(sg.hwStatus||{}).forEach(k=>{ localG.hwStatus[k]=sg.hwStatus[k]; });
+    Object.keys(sg.conduct||{}).forEach(k=>{
+      if(!localG.conduct[k]||(sg.conduct[k]?.level||0)>(localG.conduct[k]?.level||0))
+        localG.conduct[k]=sg.conduct[k];
+    });
+    const stored=JSON.parse(localStorage.getItem('regCalif_v3')||'{}');
+    if(!stored.asistencia) stored.asistencia={};
+    Object.keys(sg.asistencia||{}).forEach(k=>{
+      stored.asistencia[k]={...(stored.asistencia[k]||{}),...sg.asistencia[k]};
+      asistMerged++;
+    });
+    localStorage.setItem('regCalif_v3',JSON.stringify(stored));
+    gruposMerged++;
+  });
+
+  autoSave();
+  renderMain();
+
+  const fb = document.getElementById('sincScanFeedback');
+  const msg = `✅ ¡Sincronización completa! — ${calMerged} calificaciones, ${asistMerged} registros de asistencia en ${gruposMerged} grupo${gruposMerged!==1?'s':''}`;
+  if(fb) fb.innerHTML=`<div style="background:#f0fff4;border:1.5px solid #a0ddb0;border-radius:8px;padding:10px 14px;font-weight:700;color:#155724">${msg}</div>`;
+  showToast(msg,'success');
+
+  // Beep de éxito
+  try{
+    const ac=new(window.AudioContext||window.webkitAudioContext)();
+    [880,1100,1320].forEach((f,i)=>{
+      const o=ac.createOscillator(),g=ac.createGain();
+      o.connect(g);g.connect(ac.destination);
+      o.frequency.value=f;
+      g.gain.setValueAtTime(0.12,ac.currentTime+i*0.12);
+      g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+i*0.12+0.2);
+      o.start(ac.currentTime+i*0.12);o.stop(ac.currentTime+i*0.12+0.2);
+    });
+  }catch(e){}
+}
+
+// También actualizar importarSincDia para usar _aplicarSincDia
+function importarSincDia(input) {
+  const file=input.files[0];if(!file)return;
+  const label=document.getElementById('sincImportLabel');
+  if(label)label.textContent=file.name;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const sync=JSON.parse(e.target.result);
+      if(sync.version!=='sync_v1'){showToast('Archivo no es un sync válido','error');return;}
+      _aplicarSincDia(sync);
+    }catch(err){showToast('Error al leer archivo: '+err.message,'error');}
+    input.value='';
+  };
+  reader.readAsText(file);
+}
+
+</script>
+<script>
+if('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/calificaciones/sw.js')
+      .then(r => console.log('SW registrado'))
+      .catch(e => console.log('SW error:', e));
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SCANNER QR PARA SINCRONIZACIÓN (laptop recibe desde tableta)
+// ════════════════════════════════════════════════════════════════════
+
+let _sincScanner = {
+  stream: null, anim: null, active: false,
+  chunks: {}, total: 0, received: new Set()
+};
+
+function setSincImportMode(mode) {
+  const cam  = document.getElementById('sincImportCam');
+  const file = document.getElementById('sincImportFile');
+  const btnC = document.getElementById('btnSincCam');
+  const btnF = document.getElementById('btnSincFile');
+  if(mode==='cam'){
+    if(cam)  cam.style.display='block';
+    if(file) file.style.display='none';
+    if(btnC){ btnC.style.background='#2a4a8a';btnC.style.color='white';btnC.style.borderColor='#2a4a8a'; }
+    if(btnF){ btnF.style.background='var(--cream)';btnF.style.color='var(--ink)';btnF.style.borderColor='var(--border)'; }
+  } else {
+    detenerSincScanner();
+    if(cam)  cam.style.display='none';
+    if(file) file.style.display='block';
+    if(btnC){ btnC.style.background='var(--cream)';btnC.style.color='var(--ink)';btnC.style.borderColor='var(--border)'; }
+    if(btnF){ btnF.style.background='#b85c00';btnF.style.color='white';btnF.style.borderColor='#b85c00'; }
+  }
+}
+
+function iniciarSincScanner() {
+  if(!navigator.mediaDevices){ showToast('Cámara no disponible en este dispositivo','error'); return; }
+
+  const wrap  = document.getElementById('sincScannerWrap');
+  const btnI  = document.getElementById('btnIniciarSincCam');
+  const btnD  = document.getElementById('btnDetenerSincCam');
+  const prog  = document.getElementById('sincScanProgress');
+  const fb    = document.getElementById('sincScanFeedback');
+
+  if(wrap)  wrap.style.display='block';
+  if(btnI)  btnI.style.display='none';
+  if(btnD)  btnD.style.display='inline-block';
+  if(prog)  prog.style.display='block';
+  if(fb)    fb.innerHTML='<span style="color:#2a4a8a">🔍 Apunta al QR de la tableta...</span>';
+
+  // Reset chunks
+  _sincScanner.chunks  = {};
+  _sincScanner.total   = 0;
+  _sincScanner.received = new Set();
+
+  navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}})
+    .then(stream => {
+      _sincScanner.stream = stream;
+      _sincScanner.active = true;
+      const video = document.getElementById('sincScanVideo');
+      if(video){ video.srcObject=stream; video.play(); }
+      _cargarJsQR(() => _sincScanFrame());
+    })
+    .catch(err => {
+      if(fb) fb.innerHTML=`<span style="color:red">❌ ${err.message}</span>`;
+      showToast('Error cámara: '+err.message,'error');
+    });
+}
+
+function detenerSincScanner() {
+  _sincScanner.active = false;
+  if(_sincScanner.anim){ cancelAnimationFrame(_sincScanner.anim); _sincScanner.anim=null; }
+  if(_sincScanner.stream){ _sincScanner.stream.getTracks().forEach(t=>{t.stop();t.enabled=false;}); _sincScanner.stream=null; }
+  const video = document.getElementById('sincScanVideo');
+  if(video){ video.srcObject=null; video.load(); }
+  const wrap = document.getElementById('sincScannerWrap');
+  const btnI = document.getElementById('btnIniciarSincCam');
+  const btnD = document.getElementById('btnDetenerSincCam');
+  if(wrap)  wrap.style.display='none';
+  if(btnI)  btnI.style.display='inline-block';
+  if(btnD)  btnD.style.display='none';
+}
+
+function _sincScanFrame() {
+  if(!_sincScanner.active) return;
+  const video  = document.getElementById('sincScanVideo');
+  const canvas = document.getElementById('sincScanCanvas');
+  if(!video||!canvas){ _sincScanner.anim=requestAnimationFrame(_sincScanFrame); return; }
+
+  function processCode(raw) {
+    try {
+      const obj = JSON.parse(raw);
+      // Formato: {i: índice, t: total, d: datos}
+      if(typeof obj.i==='number' && typeof obj.t==='number' && obj.d) {
+        if(!_sincScanner.received.has(obj.i)) {
+          _sincScanner.chunks[obj.i] = obj.d;
+          _sincScanner.total = obj.t;
+          _sincScanner.received.add(obj.i);
+
+          // Flash verde en recuadro
+          const box = document.getElementById('sincScanBox');
+          if(box){ box.style.borderColor='#2a7a4b'; setTimeout(()=>{if(box)box.style.borderColor='#2a4a8a';},400); }
+
+          // Actualizar progreso
+          const recibidos = _sincScanner.received.size;
+          const total     = _sincScanner.total;
+          const pct       = Math.round(recibidos/total*100);
+          const fill  = document.getElementById('sincScanProgressFill');
+          const title = document.getElementById('sincScanProgressTitle');
+          const detail= document.getElementById('sincScanProgressDetail');
+          const fb    = document.getElementById('sincScanFeedback');
+          if(fill)  fill.style.width = pct+'%';
+          if(title) title.textContent = `QR ${recibidos} de ${total} escaneados`;
+          if(detail){
+            const faltantes = [];
+            for(let i=0;i<total;i++){ if(!_sincScanner.received.has(i)) faltantes.push(i+1); }
+            detail.textContent = faltantes.length ? `Faltan QRs: ${faltantes.join(', ')}` : '¡Todos escaneados!';
+          }
+          if(fb) fb.innerHTML=`<span style="color:#2a7a4b;font-weight:700">✅ QR ${obj.i+1}/${total} recibido</span>`;
+
+          // Si ya están todos → fusionar automáticamente
+          if(recibidos === total) {
+            detenerSincScanner();
+            _fusionarChunksSinc();
+          }
+        }
+      }
+    } catch(e) { /* QR no es sync, ignorar */ }
+  }
+
+  // Usar BarcodeDetector si disponible
+  if(window.BarcodeDetector && video.readyState===video.HAVE_ENOUGH_DATA) {
+    new BarcodeDetector({formats:['qr_code']}).detect(video)
+      .then(codes=>{ if(codes.length) processCode(codes[0].rawValue); })
+      .catch(()=>{});
+    _sincScanner.anim = requestAnimationFrame(_sincScanFrame);
+    return;
+  }
+
+  // Fallback jsQR
+  if(!window.jsQR){ _sincScanner.anim=requestAnimationFrame(_sincScanFrame); return; }
+  const ctx = canvas.getContext('2d');
+  if(video.readyState===video.HAVE_ENOUGH_DATA) {
+    canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    const code=window.jsQR(ctx.getImageData(0,0,canvas.width,canvas.height).data,canvas.width,canvas.height,{inversionAttempts:'dontInvert'});
+    if(code&&code.data) processCode(code.data);
+  }
+  _sincScanner.anim = requestAnimationFrame(_sincScanFrame);
+}
+
+function _fusionarChunksSinc() {
+  try {
+    // Reconstruir JSON completo desde chunks en orden
+    let jsonStr = '';
+    for(let i=0; i<_sincScanner.total; i++) {
+      jsonStr += _sincScanner.chunks[i];
+    }
+    const sync = JSON.parse(jsonStr);
+
+    if(sync.version !== 'sync_v1') {
+      showToast('Formato de sincronización no reconocido','error'); return;
+    }
+
+    // Reusar la función de importación existente con el objeto directo
+    _aplicarSincDia(sync);
+
+  } catch(err) {
+    showToast('Error al reconstruir datos: '+err.message,'error');
+    const fb = document.getElementById('sincScanFeedback');
+    if(fb) fb.innerHTML=`<span style="color:red">❌ Error: ${err.message}</span>`;
+  }
+}
+
+function _aplicarSincDia(sync) {
+  let calMerged=0, asistMerged=0, gruposMerged=0;
+
+  Object.values(sync.grupos).forEach(sg => {
+    let localG = data.groups.find(g => g.id === sg.id);
+    if(!localG){ data.groups.push({...sg}); gruposMerged++; return; }
+
+    Object.keys(sg.grades||{}).forEach(k=>{
+      if(sg.grades[k]!==undefined&&sg.grades[k]!==''){localG.grades[k]=sg.grades[k];calMerged++;}
+    });
+    Object.keys(sg.hwStatus||{}).forEach(k=>{ localG.hwStatus[k]=sg.hwStatus[k]; });
+    Object.keys(sg.conduct||{}).forEach(k=>{
+      if(!localG.conduct[k]||(sg.conduct[k]?.level||0)>(localG.conduct[k]?.level||0))
+        localG.conduct[k]=sg.conduct[k];
+    });
+    const stored=JSON.parse(localStorage.getItem('regCalif_v3')||'{}');
+    if(!stored.asistencia) stored.asistencia={};
+    Object.keys(sg.asistencia||{}).forEach(k=>{
+      stored.asistencia[k]={...(stored.asistencia[k]||{}),...sg.asistencia[k]};
+      asistMerged++;
+    });
+    localStorage.setItem('regCalif_v3',JSON.stringify(stored));
+    gruposMerged++;
+  });
+
+  autoSave();
+  renderMain();
+
+  const fb = document.getElementById('sincScanFeedback');
+  const msg = `✅ ¡Sincronización completa! — ${calMerged} calificaciones, ${asistMerged} registros de asistencia en ${gruposMerged} grupo${gruposMerged!==1?'s':''}`;
+  if(fb) fb.innerHTML=`<div style="background:#f0fff4;border:1.5px solid #a0ddb0;border-radius:8px;padding:10px 14px;font-weight:700;color:#155724">${msg}</div>`;
+  showToast(msg,'success');
+
+  // Beep de éxito
+  try{
+    const ac=new(window.AudioContext||window.webkitAudioContext)();
+    [880,1100,1320].forEach((f,i)=>{
+      const o=ac.createOscillator(),g=ac.createGain();
+      o.connect(g);g.connect(ac.destination);
+      o.frequency.value=f;
+      g.gain.setValueAtTime(0.12,ac.currentTime+i*0.12);
+      g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+i*0.12+0.2);
+      o.start(ac.currentTime+i*0.12);o.stop(ac.currentTime+i*0.12+0.2);
+    });
+  }catch(e){}
+}
+
+// También actualizar importarSincDia para usar _aplicarSincDia
+function importarSincDia(input) {
+  const file=input.files[0];if(!file)return;
+  const label=document.getElementById('sincImportLabel');
+  if(label)label.textContent=file.name;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const sync=JSON.parse(e.target.result);
+      if(sync.version!=='sync_v1'){showToast('Archivo no es un sync válido','error');return;}
+      _aplicarSincDia(sync);
+    }catch(err){showToast('Error al leer archivo: '+err.message,'error');}
+    input.value='';
+  };
+  reader.readAsText(file);
+}
 
 </script>
 </body>
