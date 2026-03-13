@@ -5727,23 +5727,24 @@ function fbGuardar() {
 }
 
 // ── Cargar datos desde la nube al abrir la app ───────────────────────────
-function fbCargarDesdeNube(mostrarToast = true) {
+function fbCargarDesdeNube(mostrarToast = true, forzar = false) {
   if (!FB.ref) return;
   FB.ref.once('value').then(snap => {
     const remote = snap.val();
-    if (!remote || !remote.groups) return;
+    if (!remote || !remote.groups) {
+      if (mostrarToast) showToast('☁️ No hay datos en Firebase todavía', 'info');
+      return;
+    }
 
     const localTs  = data._savedAt  || 0;
     const remoteTs = remote._savedAt || 0;
-
-    // Si no hay datos locales reales o son datos de ejemplo, siempre traer de Firebase
     const sinDatosLocales = !data._savedAt || data._esSample;
 
-    if (sinDatosLocales || remoteTs > localTs) {
+    if (forzar || sinDatosLocales || remoteTs > localTs) {
       _fbAplicarRemoto(remote);
       if (mostrarToast) showToast('☁️ Datos actualizados desde Firebase', 'success');
     } else if (mostrarToast) {
-      showToast('☁️ Firebase: tus datos locales son los más recientes', 'success');
+      showToast('☁️ Tus datos locales ya son los más recientes', 'info');
     }
   }).catch(e => {
     if (mostrarToast) showToast('⚠️ Error al cargar nube: ' + e.message, 'error');
@@ -5867,7 +5868,7 @@ function fbRefreshUI() {
         <div style="font-weight:700;font-size:0.85rem;color:#155724">Conectado a Firebase</div>
         <div style="font-size:0.72rem;color:#555;margin-top:1px">${FB.config?.projectId || ''} · ID: ${FB.deviceId || '—'}</div>
       </div>
-      <button onclick="fbCargarDesdeNube(true)"
+      <button onclick="fbCargarDesdeNube(true, true)"
         style="padding:6px 12px;background:#2a7a4b;color:white;border:none;border-radius:6px;
                font-family:inherit;font-size:0.75rem;font-weight:700;cursor:pointer">
         ☁️ Traer ahora
