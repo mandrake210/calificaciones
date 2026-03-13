@@ -1140,6 +1140,7 @@ function init() {
   // Inyectar datos de ejemplo si no hay grupos
   if (data.groups.length === 0) {
     data.groups = buildSampleData();
+    data._esSample = true; // marcar como datos de ejemplo (se reemplaza con Firebase)
     localStorage.setItem('regCalif_v3', JSON.stringify(data));
   }
 
@@ -5735,8 +5736,8 @@ function fbCargarDesdeNube(mostrarToast = true) {
     const localTs  = data._savedAt  || 0;
     const remoteTs = remote._savedAt || 0;
 
-    // Si no hay datos locales reales (sin _savedAt), siempre traer de Firebase
-    const sinDatosLocales = !data._savedAt;
+    // Si no hay datos locales reales o son datos de ejemplo, siempre traer de Firebase
+    const sinDatosLocales = !data._savedAt || data._esSample;
 
     if (sinDatosLocales || remoteTs > localTs) {
       _fbAplicarRemoto(remote);
