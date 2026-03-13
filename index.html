@@ -5735,7 +5735,10 @@ function fbCargarDesdeNube(mostrarToast = true) {
     const localTs  = data._savedAt  || 0;
     const remoteTs = remote._savedAt || 0;
 
-    if (remoteTs > localTs) {
+    // Si no hay datos locales reales (sin _savedAt), siempre traer de Firebase
+    const sinDatosLocales = !data._savedAt;
+
+    if (sinDatosLocales || remoteTs > localTs) {
       _fbAplicarRemoto(remote);
       if (mostrarToast) showToast('☁️ Datos actualizados desde Firebase', 'success');
     } else if (mostrarToast) {
