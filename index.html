@@ -3024,12 +3024,13 @@ function renderSettingsTab(container) {
                  display:flex;align-items:center;gap:6px">
           💾 Exportar JSON
         </button>
-        <button onclick="showImportModal()" style="padding:9px 20px;background:var(--cream);color:var(--ink);
+        <label style="padding:9px 20px;background:var(--cream);color:var(--ink);
                       border:1.5px solid var(--border);border-radius:7px;font-family:inherit;
                       font-size:0.85rem;font-weight:700;cursor:pointer;
                       display:flex;align-items:center;gap:6px">
           📂 Importar JSON
-        </button>
+          <input type="file" accept=".json" style="display:none" onchange="importData(event)">
+        </label>
         <span style="font-size:0.72rem;color:#aaa">Guarda todos los grupos y configuraciones</span>
       </div>
     </div>
@@ -3754,56 +3755,17 @@ function deleteActivityById(aid){
 // ---- IMPORT / EXPORT ----
 function exportData(){
   const json = JSON.stringify(data, null, 2);
-  const now = new Date();
+  const now  = new Date();
   const fname = `calificaciones_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.json`;
-
-  // Intentar descarga normal primero
-  try {
-    const blob = new Blob([json], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fname;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch(e) {}
-
-  // Mostrar modal con el JSON para copiar (siempre, como respaldo para Android)
-  const existing = document.getElementById('_exportModal');
-  if (existing) existing.remove();
-  const modal = document.createElement('div');
-  modal.id = '_exportModal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-  modal.innerHTML = `
-    <div style="background:#1e1e3a;border-radius:12px;padding:20px;width:100%;max-width:560px;color:#eee;font-family:inherit">
-      <div style="font-size:1rem;font-weight:700;margin-bottom:8px">💾 Exportar JSON — ${fname}</div>
-      <div style="font-size:0.78rem;color:#aaa;margin-bottom:10px">Mantén presionado el texto de abajo → Seleccionar todo → Copiar. Luego pégalo en WhatsApp, Drive o un archivo.</div>
-      <textarea id="_exportTA" readonly style="width:100%;height:200px;background:#0d0d1a;color:#7dffb3;border:1.5px solid #444;border-radius:8px;padding:10px;font-size:0.7rem;font-family:monospace;resize:vertical;box-sizing:border-box">${json.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
-      <div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">
-        <button onclick="document.getElementById('_exportModal').remove()" style="padding:8px 18px;background:none;color:#aaa;border:1px solid #555;border-radius:7px;font-family:inherit;cursor:pointer">Cerrar</button>
-        <button onclick="_copyExport()" style="padding:8px 18px;background:#2a9d2a;color:#fff;border:none;border-radius:7px;font-family:inherit;font-weight:700;cursor:pointer">📋 Copiar todo</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  // Seleccionar el texto automáticamente
-  setTimeout(() => { const ta = document.getElementById('_exportTA'); if(ta){ ta.focus(); ta.select(); } }, 150);
-}
-
-function _copyExport() {
-  const ta = document.getElementById('_exportTA');
-  if (!ta) return;
-  ta.select();
-  try {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(ta.value).then(() => showToast('📋 Copiado al portapapeles','success'));
-    } else {
-      document.execCommand('copy');
-      showToast('📋 Copiado al portapapeles','success');
-    }
-  } catch(e) {
-    showToast('Selecciona el texto y copia manualmente','info');
-  }
+  const blob = new Blob([json], {type:'application/json'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('📤 Archivo JSON descargado', 'success');
 }
 // Importar desde texto pegado (funciona en Android WebView)
 function _importApply(imp) {
@@ -3870,8 +3832,7 @@ function _importFromModal() {
 }
 
 function importData(event){
-  const file = event.target.files[0];
-  if (!file) { showImportModal(); return; }
+  const file = event.target.files[0]; if(!file) return;
   const reader = new FileReader();
   reader.onload = e => {
     try { _importApply(JSON.parse(e.target.result)); }
