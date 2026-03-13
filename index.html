@@ -2193,7 +2193,8 @@ function p2pInit() {
   p2pLoadState();
   p2pSetStatus('loading', 'Cargando módulo de conexión…');
 
-  // Generar ID propio corto si aún no existe
+  // Generar ID propio corto si aún no existe (o si el guardado era un UUID viejo)
+  const esNuevoId = !P2P.myId;
   if (!P2P.myId) {
     P2P.myId = _p2pGenerarId();
     p2pSaveState();
@@ -2201,6 +2202,12 @@ function p2pInit() {
 
   _cargarPeerJS(() => {
     _p2pCrearPeer(P2P.myId);
+    // Si se generó un ID nuevo, avisar que hay que volver a conectar
+    if (esNuevoId) {
+      setTimeout(() => {
+        showToast('🆕 ID nuevo generado: ' + P2P.myId + ' — compártelo con el otro dispositivo', 'success');
+      }, 1500);
+    }
   });
 }
 
@@ -3901,8 +3908,36 @@ function shareWhatsApp(sid) {
 
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-init();
+// ════════════════════════════════════════════════════════════════════
+// AUTO-SANACIÓN AL ARRANCAR: limpia estado P2P viejo + caché del navegador
+// ════════════════════════════════════════════════════════════════════
+(function _autoSanar() {
+  // 1. Desregistrar service workers que puedan servir versiones cacheadas
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(regs => {
+      regs.forEach(r => r.unregister());
+    }).catch(() => {});
+  }
 
+  // 2. Limpiar caches de la API Cache Storage (PWA)
+  if ('caches' in window) {
+    caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+  }
+
+  // 3. Detectar y borrar IDs P2P viejos (UUIDs largos de versiones anteriores)
+  //    Un ID válido nuevo tiene formato: rc-xxxxx (8 chars total)
+  const P2P_KEY = 'regCalif_p2p_v1';
+  try {
+    const saved = JSON.parse(localStorage.getItem(P2P_KEY) || '{}');
+    const esIdViejo = id => typeof id === 'string' && !/^rc-[a-z0-9]{5}$/.test(id);
+    if (esIdViejo(saved.myId) || esIdViejo(saved.remoteId)) {
+      console.info('[AutoSanación] IDs P2P antiguos detectados — limpiando:', saved.myId, saved.remoteId);
+      localStorage.removeItem(P2P_KEY);
+    }
+  } catch(e) {}
+})();
+
+init();
 // ════════════════════════════════════════════════════════════════════
 // MÓDULO ASISTENCIA + QR EXTERNO
 // ════════════════════════════════════════════════════════════════════
