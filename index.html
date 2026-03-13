@@ -2129,14 +2129,25 @@ function _p2pGetOpenConn() {
 const P2P_STORAGE_KEY = 'regCalif_p2p_v1'; // clave en localStorage
 
 // ── Persistencia del estado P2P ──────────────────────────────────────────
+// Detecta si un ID tiene el formato nuevo corto (rc-xxxxx)
+function _p2pIdValido(id) {
+  return typeof id === 'string' && /^rc-[a-z0-9]{5}$/.test(id);
+}
+
 function p2pLoadState() {
   try {
     const s = JSON.parse(localStorage.getItem(P2P_STORAGE_KEY) || '{}');
-    P2P.myId      = s.myId      || null;
-    P2P.remoteId  = s.remoteId  || null;
-    P2P.lastSync  = s.lastSync  || null;
-    P2P.autoSync  = s.autoSync !== false; // true por defecto
-    P2P.syncLog   = s.syncLog   || [];
+    // Si el ID guardado es un UUID viejo (formato largo), descartarlo
+    P2P.myId     = _p2pIdValido(s.myId)     ? s.myId     : null;
+    P2P.remoteId = _p2pIdValido(s.remoteId) ? s.remoteId : null;
+    P2P.lastSync = s.lastSync || null;
+    P2P.autoSync = s.autoSync !== false;
+    P2P.syncLog  = s.syncLog  || [];
+    // Limpiar storage si habia IDs viejos
+    if (s.myId && !_p2pIdValido(s.myId)) {
+      console.info('[P2P] ID antiguo detectado y descartado:', s.myId);
+      localStorage.removeItem(P2P_STORAGE_KEY);
+    }
   } catch(e) {}
 }
 
@@ -2868,7 +2879,13 @@ function p2pRefreshUI() {
 
     <!-- Botón desactivar -->
     ${P2P.myId ? `
-      <div style="margin-top:12px;text-align:right">
+      <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <button onclick="p2pResetearIds()"
+          style="padding:5px 14px;background:#fff8e8;color:#7a5a00;border:1.5px solid #f0c060;
+                 border-radius:6px;font-family:inherit;font-size:0.75rem;font-weight:700;cursor:pointer"
+          title="Borra los IDs guardados y genera unos nuevos — úsalo si los dispositivos no se reconocen">
+          🔁 Restablecer IDs (si no conecta)
+        </button>
         <button onclick="p2pDesconectar()"
           style="padding:5px 12px;background:none;color:#aaa;border:1px solid #ddd;
                  border-radius:6px;font-family:inherit;font-size:0.72rem;cursor:pointer">
@@ -2885,6 +2902,21 @@ function p2pRefreshUI() {
       </div>
     `}
   `;
+}
+
+// ── Restablecer completamente los IDs P2P ────────────────────────────────
+// Úsalo cuando los IDs guardados son incompatibles (ej: UUIDs de versión anterior).
+function p2pResetearIds() {
+  if (!confirm('¿Restablecer los IDs de sincronización?\n\nSe generarán IDs nuevos en ambos dispositivos. Deberás volver a conectarlos una vez.')) return;
+  if (P2P.autoRetry) { clearTimeout(P2P.autoRetry); P2P.autoRetry = null; }
+  P2P.conns.forEach(c => { try { c.close(); } catch(e){} });
+  P2P.conns = []; P2P.conn = null;
+  if (P2P.peer) { try { P2P.peer.destroy(); } catch(e){} P2P.peer = null; }
+  P2P.myId = null; P2P.remoteId = null; P2P.status = 'idle';
+  P2P.lastSync = null; P2P.syncLog = [];
+  localStorage.removeItem(P2P_STORAGE_KEY);
+  showToast('🔁 IDs restablecidos — generando nuevos…', 'success');
+  setTimeout(() => p2pInit(), 600);
 }
 
 // ── Olvidar ID remoto (para cambiar de par) ───────────────────────────────
