@@ -1151,6 +1151,9 @@ function init() {
   renderSidebar();
   renderMain();
 
+  // Iniciar Firebase (si está configurado)
+  setTimeout(() => { if (typeof fbInit === 'function') fbInit(); }, 800);
+
   // Atajos de teclado: + = Alumno, - = Actividad, Ctrl+Z = Deshacer, Esc = cerrar modal rapido
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
@@ -1168,13 +1171,21 @@ function init() {
 }
 
 function saveAll() {
+  // Marcar timestamp del guardado local
+  data._savedAt = Date.now();
   localStorage.setItem('regCalif_v3', JSON.stringify(data));
-  // ── Sincronización al guardar ─────────────────────────────────────
+
+  // ── Firebase: guardar en la nube ──────────────────────────────────
+  const fbOk = (typeof fbGuardar === 'function') && fbGuardar();
+
+  // ── P2P: sincronizar con dispositivos conectados ──────────────────
   const conn = _p2pGetOpenConn ? _p2pGetOpenConn() : null;
   if (conn && P2P && P2P.autoSync) {
     _p2pEnviarAlGuardar();
-  } else {
+  } else if (!fbOk) {
     showToast('💾 Guardado correctamente', 'success');
+  } else {
+    showToast('💾 Guardado · ☁️ Sincronizado con Firebase', 'success');
   }
 }
 
@@ -2970,7 +2981,28 @@ function renderSettingsTab(container) {
       </div>
     </div>
 
-    <!-- ══ 2. RESPALDO JSON ══════════════════════════════════════════════ -->
+    <!-- ══ 2. FIREBASE NUBE ════════════════════════════════════════════ -->
+    <div style="background:white;border:2px solid #f57c00;border-radius:12px;overflow:hidden;
+                box-shadow:0 2px 10px rgba(245,124,0,0.12)">
+      <div style="background:linear-gradient(135deg,#e65100 0%,#f57c00 100%);
+                  padding:14px 20px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:1.5rem">🔥</span>
+        <div style="flex:1">
+          <div style="font-family:'DM Serif Display',serif;font-size:1.05rem;color:white">
+            Sincronización en la Nube (Firebase)
+          </div>
+          <div style="font-size:0.72rem;color:rgba(255,255,255,0.65);margin-top:2px">
+            Los datos se guardan en la nube — se actualizan aunque la app esté cerrada
+          </div>
+        </div>
+        <div id="fbStatusDot" style="width:10px;height:10px;border-radius:50%;background:#888;transition:background 0.4s"></div>
+      </div>
+      <div id="fbPanel" style="padding:18px 20px">
+        <div style="text-align:center;color:#aaa;font-size:0.85rem;padding:20px 0">Iniciando…</div>
+      </div>
+    </div>
+
+    <!-- ══ 3. RESPALDO JSON ══════════════════════════════════════════════ -->
     <div style="background:white;border:1.5px solid var(--border);border-radius:12px;overflow:hidden;
                 box-shadow:0 2px 6px rgba(0,0,0,0.05)">
       <div style="background:var(--ink);padding:13px 20px;display:flex;align-items:center;gap:10px">
@@ -5461,6 +5493,344 @@ function _cargarQRCode(cb) {
   // QRCode library is now embedded inline - always available
   cb();
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// MÓDULO FIREBASE REALTIME DATABASE
+// Sincronización en la nube: funciona aunque la otra app esté cerrada
+// ════════════════════════════════════════════════════════════════════════════
+
+const FB_CONFIG_KEY = 'regCalif_firebase_v1';
+const FB_DATA_PATH  = 'calificaciones/data';
+const FB_META_PATH  = 'calificaciones/meta';
+
+const FB = {
+  app:       null,
+  db:        null,
+  ref:       null,
+  metaRef:   null,
+  status:    'idle',   // idle | loading | connected | error | disabled
+  lastSync:  null,
+  config:    null,
+  listener:  null,     // unsubscribe function
+  deviceId:  null,
+  syncLog:   [],
+};
+
+// ── Cargar config guardada ────────────────────────────────────────────────
+function fbLoadConfig() {
+  try {
+    const c = JSON.parse(localStorage.getItem(FB_CONFIG_KEY) || 'null');
+    if (c && c.apiKey && c.databaseURL) { FB.config = c; return true; }
+  } catch(e) {}
+  return false;
+}
+
+function fbSaveConfig(cfg) {
+  localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(cfg));
+  FB.config = cfg;
+}
+
+// ── Cargar SDK de Firebase (lazy) ─────────────────────────────────────────
+function _fbCargarSDK(cb) {
+  if (window.firebase) { cb(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js';
+  s.onload = () => {
+    const s2 = document.createElement('script');
+    s2.src = 'https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js';
+    s2.onload = cb;
+    s2.onerror = () => fbSetStatus('error', 'No se pudo cargar Firebase SDK');
+    document.head.appendChild(s2);
+  };
+  s.onerror = () => fbSetStatus('error', 'Sin internet para cargar Firebase');
+  document.head.appendChild(s);
+}
+
+// ── Inicializar Firebase ───────────────────────────────────────────────────
+function fbInit() {
+  if (!fbLoadConfig()) { FB.status = 'idle'; fbRefreshUI(); return; }
+  fbSetStatus('loading', 'Conectando a Firebase…');
+
+  // Generar deviceId si no existe
+  if (!FB.deviceId) {
+    FB.deviceId = P2P.myId || ('dev-' + Math.random().toString(36).slice(2,7));
+  }
+
+  _fbCargarSDK(() => {
+    try {
+      // Destruir app previa si existe
+      if (FB.app) { try { FB.app.delete(); } catch(e){} }
+      FB.app = firebase.initializeApp(FB.config, 'calificaciones_' + Date.now());
+      FB.db  = firebase.database(FB.app);
+      FB.ref = FB.db.ref(FB_DATA_PATH);
+      FB.metaRef = FB.db.ref(FB_META_PATH);
+
+      // Detectar conectividad
+      FB.db.ref('.info/connected').on('value', snap => {
+        const online = snap.val() === true;
+        if (online && FB.status !== 'connected') {
+          fbSetStatus('connected', 'Conectado a Firebase');
+          fbRefreshUI();
+          // Al reconectar: traer datos más recientes de la nube
+          fbCargarDesdeNube(false);
+        } else if (!online && FB.status === 'connected') {
+          fbSetStatus('loading', 'Reconectando…');
+          fbRefreshUI();
+        }
+      });
+
+      // Listener en tiempo real: cuando OTRO dispositivo guarda, actualiza aquí
+      if (FB.listener) { try { FB.ref.off('value', FB.listener); } catch(e){} }
+      FB.listener = FB.ref.on('value', snap => {
+        const remote = snap.val();
+        if (!remote) return;
+        // Solo aplicar si el cambio vino de otro dispositivo
+        if (remote._savedBy && remote._savedBy === FB.deviceId) return;
+        _fbAplicarRemoto(remote);
+      });
+
+      fbSetStatus('connected', 'Conectado');
+      fbRefreshUI();
+    } catch(e) {
+      fbSetStatus('error', 'Error al inicializar: ' + e.message);
+      fbRefreshUI();
+    }
+  });
+}
+
+// ── Guardar TODO en Firebase (llamado desde saveAll) ──────────────────────
+function fbGuardar() {
+  if (FB.status !== 'connected' || !FB.ref) return false;
+  try {
+    const payload = {
+      ...data,
+      _savedBy:  FB.deviceId,
+      _savedAt:  Date.now(),
+      _version:  '10.15',
+    };
+    FB.ref.set(payload).then(() => {
+      const hora = new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+      FB.lastSync = hora;
+      FB.syncLog.unshift({ ts: hora, dir: 'enviado', device: FB.deviceId });
+      if (FB.syncLog.length > 20) FB.syncLog.pop();
+      fbRefreshUI();
+    }).catch(e => {
+      showToast('⚠️ Firebase: ' + e.message, 'error');
+    });
+    return true;
+  } catch(e) { return false; }
+}
+
+// ── Cargar datos desde la nube al abrir la app ───────────────────────────
+function fbCargarDesdeNube(mostrarToast = true) {
+  if (!FB.ref) return;
+  FB.ref.once('value').then(snap => {
+    const remote = snap.val();
+    if (!remote || !remote.groups) return;
+
+    const localTs  = data._savedAt  || 0;
+    const remoteTs = remote._savedAt || 0;
+
+    if (remoteTs > localTs) {
+      _fbAplicarRemoto(remote);
+      if (mostrarToast) showToast('☁️ Datos actualizados desde Firebase', 'success');
+    } else if (mostrarToast) {
+      showToast('☁️ Firebase: tus datos locales son los más recientes', 'success');
+    }
+  }).catch(e => {
+    if (mostrarToast) showToast('⚠️ Error al cargar nube: ' + e.message, 'error');
+  });
+}
+
+// ── Aplicar datos remotos al estado local ─────────────────────────────────
+function _fbAplicarRemoto(remote) {
+  try {
+    const { _savedBy, _savedAt, _version, ...remoteData } = remote;
+    if (!remoteData.groups) return;
+
+    // Guardar localmente
+    data = { ...remoteData };
+    data.groups.forEach(g => {
+      if (!g.grades)   g.grades   = {};
+      if (!g.conduct)  g.conduct  = {};
+      if (!g.hwStatus) g.hwStatus = {};
+    });
+    localStorage.setItem('regCalif_v3', JSON.stringify(data));
+
+    // Refrescar UI
+    const hora = new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+    FB.lastSync = hora;
+    const from = _savedBy && _savedBy !== FB.deviceId ? _savedBy : 'otro dispositivo';
+    FB.syncLog.unshift({ ts: hora, dir: 'recibido', device: from });
+    if (FB.syncLog.length > 20) FB.syncLog.pop();
+
+    renderSidebar();
+    if (currentGroupId && !data.groups.find(g => g.id === currentGroupId)) currentGroupId = null;
+    renderMain();
+    fbRefreshUI();
+
+    if (_savedBy && _savedBy !== FB.deviceId) {
+      showToast(`☁️ ${from} guardó cambios — app actualizada`, 'success');
+    }
+  } catch(e) { console.error('[Firebase] Error al aplicar remoto:', e); }
+}
+
+// ── Desconectar Firebase ───────────────────────────────────────────────────
+function fbDesconectar() {
+  if (FB.listener && FB.ref) { try { FB.ref.off('value', FB.listener); } catch(e){} }
+  if (FB.app) { try { FB.app.delete(); } catch(e){} }
+  FB.app = null; FB.db = null; FB.ref = null; FB.metaRef = null;
+  FB.status = 'idle'; FB.listener = null;
+  localStorage.removeItem(FB_CONFIG_KEY);
+  FB.config = null;
+  fbRefreshUI();
+  showToast('Firebase desconectado', 'success');
+}
+
+// ── Estado ────────────────────────────────────────────────────────────────
+function fbSetStatus(status, msg) {
+  FB.status = status;
+  FB._statusMsg = msg || '';
+}
+
+// ── Guardar config desde el formulario ───────────────────────────────────
+function fbGuardarConfig() {
+  const raw = document.getElementById('fbConfigInput')?.value?.trim();
+  if (!raw) { showToast('Pega tu configuración de Firebase', 'error'); return; }
+  try {
+    // Soporta tanto objeto JS como JSON
+    let cfg;
+    const jsonStr = raw
+      .replace(/^\s*const\s+\w+\s*=\s*/, '')  // quita "const firebaseConfig = "
+      .replace(/;\s*$/, '')                     // quita ";" final
+      .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3'); // convierte keys a JSON
+    cfg = JSON.parse(jsonStr);
+
+    if (!cfg.apiKey || !cfg.databaseURL) {
+      showToast('⚠️ Falta apiKey o databaseURL en la config', 'error');
+      return;
+    }
+    fbSaveConfig(cfg);
+    showToast('✅ Configuración guardada — conectando…', 'success');
+    setTimeout(fbInit, 400);
+  } catch(e) {
+    showToast('Error al parsear config: ' + e.message, 'error');
+  }
+}
+
+// ── UI del panel Firebase ─────────────────────────────────────────────────
+function fbRefreshUI() {
+  const panel = document.getElementById('fbPanel');
+  if (!panel) return;
+  // Update status dot
+  const dot = document.getElementById('fbStatusDot');
+  if (dot) {
+    const colors = { idle:'#888', loading:'#f0a500', connected:'#22cc55', error:'#ee3333', disabled:'#888' };
+    dot.style.background = colors[FB.status] || '#888';
+  }
+
+  const statusInfo = {
+    idle:      { color:'#888',    bg:'#f5f5f5', icon:'⚪', label:'Sin configurar' },
+    loading:   { color:'#b85c00', bg:'#fff8f0', icon:'⏳', label:'Conectando…' },
+    connected: { color:'#155724', bg:'#e8f8ee', icon:'🟢', label:'Conectado' },
+    error:     { color:'#7a1010', bg:'#fff0f0', icon:'🔴', label:'Error' },
+    disabled:  { color:'#888',    bg:'#f5f5f5', icon:'⚫', label:'Desactivado' },
+  };
+  const si = statusInfo[FB.status] || statusInfo.idle;
+  const isConnected = FB.status === 'connected';
+
+  const logHTML = FB.syncLog.length
+    ? FB.syncLog.slice(0,5).map(e => `
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f0f0f0;font-size:0.75rem">
+          <span>${e.dir === 'enviado' ? '📤' : '📥'}</span>
+          <span style="flex:1;color:${e.dir==='enviado'?'#155724':'#1a3a6a'};font-weight:600">
+            ${e.dir === 'enviado' ? 'Tú guardaste' : 'Recibido de ' + e.device}
+          </span>
+          <span style="color:#bbb">${e.ts}</span>
+        </div>`).join('')
+    : `<div style="color:#bbb;font-size:0.78rem;text-align:center;padding:8px 0">Sin sincronizaciones</div>`;
+
+  panel.innerHTML = isConnected ? `
+    <!-- Estado conectado -->
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;
+                background:#e8f8ee;border:1.5px solid #a0ddb0;border-radius:10px;margin-bottom:14px">
+      <span style="font-size:1.2rem">🟢</span>
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:0.85rem;color:#155724">Conectado a Firebase</div>
+        <div style="font-size:0.72rem;color:#555;margin-top:1px">${FB.config?.projectId || ''} · ID: ${FB.deviceId || '—'}</div>
+      </div>
+      <button onclick="fbCargarDesdeNube(true)"
+        style="padding:6px 12px;background:#2a7a4b;color:white;border:none;border-radius:6px;
+               font-family:inherit;font-size:0.75rem;font-weight:700;cursor:pointer">
+        ☁️ Traer ahora
+      </button>
+    </div>
+
+    <!-- Log -->
+    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#888;margin-bottom:6px">
+      Últimas sincronizaciones
+    </div>
+    <div style="background:#fafafa;border:1.5px solid #eee;border-radius:8px;padding:8px 12px;margin-bottom:12px">
+      ${logHTML}
+    </div>
+
+    <div style="text-align:right">
+      <button onclick="if(confirm('¿Desconectar Firebase?')) fbDesconectar()"
+        style="padding:5px 12px;background:none;color:#aaa;border:1px solid #ddd;
+               border-radius:6px;font-family:inherit;font-size:0.72rem;cursor:pointer">
+        ⊘ Desconectar Firebase
+      </button>
+    </div>
+  ` : `
+    <!-- Formulario de configuración -->
+    <div style="font-size:0.82rem;color:#555;margin-bottom:14px;line-height:1.6">
+      Firebase sincroniza tus datos en la nube — funciona aunque la app Android esté cerrada.
+      Es <strong>gratis</strong> para este uso.
+    </div>
+
+    <div style="background:#f0f8ff;border:1.5px solid #b0d4f0;border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:0.78rem;line-height:1.7">
+      <div style="font-weight:700;color:#1a3a6a;margin-bottom:6px">📋 Pasos para configurar (5 minutos, gratis):</div>
+      <ol style="padding-left:18px;display:flex;flex-direction:column;gap:3px">
+        <li>Ve a <a href="https://console.firebase.google.com" target="_blank" style="color:#1a6aaa">console.firebase.google.com</a></li>
+        <li>Crea un proyecto → nombre: <strong>calificaciones</strong></li>
+        <li><strong>Realtime Database</strong> → Crear base de datos → Modo prueba</li>
+        <li><strong>Configuración del proyecto</strong> (⚙️) → "Tus apps" → Web (&lt;/&gt;) → Registrar app</li>
+        <li>Copia el objeto <code>firebaseConfig</code> y pégalo abajo</li>
+      </ol>
+    </div>
+
+    <div style="font-size:0.75rem;font-weight:700;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em">
+      Tu configuración de Firebase:
+    </div>
+    <textarea id="fbConfigInput" rows="7" placeholder='{
+  "apiKey": "AIzaSy...",
+  "authDomain": "calificaciones-xxx.firebaseapp.com",
+  "databaseURL": "https://calificaciones-xxx-default-rtdb.firebaseio.com",
+  "projectId": "calificaciones-xxx",
+  "storageBucket": "calificaciones-xxx.appspot.com",
+  "messagingSenderId": "123456789",
+  "appId": "1:123:web:abc123"
+}'
+      style="width:100%;padding:10px 12px;border:1.5px solid #ccc;border-radius:8px;
+             font-family:monospace;font-size:0.78rem;outline:none;resize:vertical;
+             background:#fafafa;box-sizing:border-box"></textarea>
+    <button onclick="fbGuardarConfig()"
+      style="margin-top:10px;width:100%;padding:11px;background:linear-gradient(135deg,#f57c00,#e65100);
+             color:white;border:none;border-radius:8px;font-family:inherit;
+             font-size:0.9rem;font-weight:700;cursor:pointer">
+      🔥 Conectar con Firebase
+    </button>
+
+    ${FB.status === 'error' ? `
+    <div style="margin-top:10px;padding:8px 12px;background:#fff0f0;border:1.5px solid #ffcccc;
+                border-radius:7px;font-size:0.78rem;color:#aa3333">
+      ❌ ${FB._statusMsg}
+    </div>` : ''}
+  `;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 </script>
 </body>
 </html>
