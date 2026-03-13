@@ -5532,12 +5532,26 @@ const FB = {
 };
 
 // ── Cargar config guardada ────────────────────────────────────────────────
+// Config pre-integrada (se puede sobreescribir desde Ajustes)
+const _FB_DEFAULT_CONFIG = {
+  apiKey: "AIzaSyDaF3fwWjFHYwosHLQc6aVlzt-DOlKwuJ8",
+  authDomain: "calificaciones-mandrake.firebaseapp.com",
+  databaseURL: "https://calificaciones-mandrake-default-rtdb.firebaseio.com",
+  projectId: "calificaciones-mandrake",
+  storageBucket: "calificaciones-mandrake.firebasestorage.app",
+  messagingSenderId: "612377791349",
+  appId: "1:612377791349:web:f759343c2c51aebc4c613c"
+};
+
 function fbLoadConfig() {
   try {
     const c = JSON.parse(localStorage.getItem(FB_CONFIG_KEY) || 'null');
     if (c && c.apiKey && c.databaseURL) { FB.config = c; return true; }
   } catch(e) {}
-  return false;
+  // Si no hay config guardada, usar la pre-integrada
+  FB.config = _FB_DEFAULT_CONFIG;
+  localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(_FB_DEFAULT_CONFIG));
+  return true;
 }
 
 function fbSaveConfig(cfg) {
